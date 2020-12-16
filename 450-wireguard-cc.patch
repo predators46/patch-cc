@@ -1,0 +1,353 @@
+From 6d3528bf03686f6414737360d7e010f26e9e6370 Mon Sep 17 00:00:00 2001
+From: "Jason A. Donenfeld" <Jason@zx2c4.com>
+Date: Fri, 13 Oct 2017 17:05:18 +0200
+Subject: [PATCH] wireguard: add wireguard to base packages
+
+Move wireguard from openwrt/packages to openwrt/openwrt. This has already
+been done with lede/source and has already been removed from
+openwrt/packages, and so this commit brings this to parity here, so that
+there isn't a regression for openwrt users. Original message follows below:
+
+This follows the pattern of kmod-cake and openvpn. Cake is a fast-moving
+experimental kernel module that many find essential and useful. The
+other is a VPN client. Both are inside of core. When you combine the two
+characteristics, you get WireGuard. Generally speaking, because of the
+extremely lightweight nature and "stateless" configuration of WireGuard,
+many view it as a core and essential utility, initiated at boot time
+and immediately configured by netifd, much like the use of things like
+GRE tunnels.
+
+WireGuard has a backwards and forwards compatible Netlink API, which
+means the userspace tools should work with both newer and older kernels
+as things change. There should be no versioning requirements, therefore,
+between kernel bumps and userspace package bumps.
+
+Signed-off-by: Kevin Darbyshire-Bryant <ldir@darbyshire-bryant.me.uk>
+Signed-off-by: Jason A. Donenfeld <Jason@zx2c4.com>
+---
+ package/network/services/wireguard/Makefile   | 116 +++++++++++
+ .../services/wireguard/files/wireguard.sh     | 192 ++++++++++++++++++
+ 2 files changed, 308 insertions(+)
+ create mode 100644 package/network/services/wireguard/Makefile
+ create mode 100644 package/network/services/wireguard/files/wireguard.sh
+
+diff --git a/package/network/services/wireguard/Makefile b/package/network/services/wireguard/Makefile
+new file mode 100644
+index 0000000000..37fdf09ea3
+--- /dev/null
++++ b/package/network/services/wireguard/Makefile
+@@ -0,0 +1,116 @@
++#
++# Copyright (C) 2016-2017 Jason A. Donenfeld <Jason@zx2c4.com>
++# Copyright (C) 2016 Baptiste Jonglez <openwrt@bitsofnetworks.org>
++# Copyright (C) 2016-2017 Dan Luedtke <mail@danrl.com>
++#
++# This is free software, licensed under the GNU General Public License v2.
++# See /LICENSE for more information.
++
++include $(TOPDIR)/rules.mk
++include $(INCLUDE_DIR)/kernel.mk
++
++PKG_NAME:=wireguard
++
++PKG_VERSION:=0.0.20171011
++PKG_RELEASE:=1
++
++PKG_SOURCE:=WireGuard-$(PKG_VERSION).tar.xz
++PKG_SOURCE_URL:=https://git.zx2c4.com/WireGuard/snapshot/
++PKG_MD5SUM:=16ff5cb73fd58c9246192f96a6610fe4
++
++PKG_LICENSE:=GPL-2.0 Apache-2.0
++PKG_LICENSE_FILES:=COPYING
++
++PKG_BUILD_DIR:=$(BUILD_DIR)/WireGuard-$(PKG_VERSION)
++PKG_BUILD_PARALLEL:=1
++PKG_USE_MIPS16:=0
++
++# WireGuard's makefile needs this to know where to build the kernel module
++export KERNELDIR:=$(LINUX_DIR)
++
++include $(INCLUDE_DIR)/package.mk
++
++define Package/wireguard/Default
++  SECTION:=net
++  CATEGORY:=Network
++  SUBMENU:=VPN
++  URL:=https://www.wireguard.com
++  MAINTAINER:=Baptiste Jonglez <openwrt@bitsofnetworks.org>, \
++              Kevin Darbyshire-Bryant <ldir@darbyshire-bryant.me.uk>, \
++              Dan Luedtke <mail@danrl.com>, \
++              Jason A. Donenfeld <Jason@zx2c4.com>
++endef
++
++define Package/wireguard/Default/description
++  WireGuard is a novel VPN that runs inside the Linux Kernel and utilizes
++  state-of-the-art cryptography. It aims to be faster, simpler, leaner, and
++  more useful than IPSec, while avoiding the massive headache. It intends to
++  be considerably more performant than OpenVPN.  WireGuard is designed as a
++  general purpose VPN for running on embedded interfaces and super computers
++  alike, fit for many different circumstances. It uses UDP.
++endef
++
++define Package/wireguard
++  $(call Package/wireguard/Default)
++  TITLE:=WireGuard meta-package
++  DEPENDS:=+wireguard-tools +kmod-wireguard
++endef
++
++include $(INCLUDE_DIR)/kernel-defaults.mk
++include $(INCLUDE_DIR)/package-defaults.mk
++
++# Used by Build/Compile/Default
++MAKE_PATH:=src/tools
++
++define Build/Compile
++	$(MAKE) $(KERNEL_MAKEOPTS) M="$(PKG_BUILD_DIR)/src" modules
++	$(call Build/Compile/Default)
++endef
++
++define Package/wireguard/install
++  true
++endef
++
++define Package/wireguard/description
++  $(call Package/wireguard/Default/description)
++endef
++
++define Package/wireguard-tools
++  $(call Package/wireguard/Default)
++  TITLE:=WireGuard userspace control program (wg)
++  DEPENDS:=+libmnl +ip
++endef
++
++define Package/wireguard-tools/description
++  $(call Package/wireguard/Default/description)
++
++  This package provides the userspace control program for WireGuard,
++  `wg(8)`, and a netifd protocol helper.
++endef
++
++define Package/wireguard-tools/install
++	$(INSTALL_DIR) $(1)/usr/bin/
++	$(INSTALL_BIN) $(PKG_BUILD_DIR)/src/tools/wg $(1)/usr/bin/
++	$(INSTALL_DIR) $(1)/lib/netifd/proto/
++	$(INSTALL_BIN) ./files/wireguard.sh $(1)/lib/netifd/proto/
++endef
++
++define KernelPackage/wireguard
++  SECTION:=kernel
++  CATEGORY:=Kernel modules
++  SUBMENU:=Network Support
++  TITLE:=WireGuard kernel module
++  DEPENDS:=+IPV6:kmod-udptunnel6 +IPV6:kmod-ipv6 +kmod-udptunnel4 +kmod-crypto-core
++  FILES:= $(PKG_BUILD_DIR)/src/wireguard.$(LINUX_KMOD_SUFFIX)
++  AUTOLOAD:=$(call AutoProbe,wireguard)
++endef
++
++define KernelPackage/wireguard/description
++  $(call Package/wireguard/Default/description)
++
++  This package provides the kernel module for WireGuard.
++endef
++
++$(eval $(call BuildPackage,wireguard))
++$(eval $(call BuildPackage,wireguard-tools))
++$(eval $(call KernelPackage,wireguard))
+diff --git a/package/network/services/wireguard/files/wireguard.sh b/package/network/services/wireguard/files/wireguard.sh
+new file mode 100644
+index 0000000000..7b18a2e0ec
+--- /dev/null
++++ b/package/network/services/wireguard/files/wireguard.sh
+@@ -0,0 +1,192 @@
++#!/bin/sh
++# Copyright 2016-2017 Dan Luedtke <mail@danrl.com>
++# Licensed to the public under the Apache License 2.0.
++
++
++WG=/usr/bin/wg
++if [ ! -x $WG ]; then
++  logger -t "wireguard" "error: missing wireguard-tools (${WG})"
++  exit 0
++fi
++
++
++[ -n "$INCLUDE_ONLY" ] || {
++  . /lib/functions.sh
++  . ../netifd-proto.sh
++  init_proto "$@"
++}
++
++
++proto_wireguard_init_config() {
++  proto_config_add_string "private_key"
++  proto_config_add_int    "listen_port"
++  proto_config_add_int    "mtu"
++  proto_config_add_string "fwmark"
++  available=1
++  no_proto_task=1
++}
++
++
++proto_wireguard_setup_peer() {
++  local peer_config="$1"
++
++  local public_key
++  local preshared_key
++  local allowed_ips
++  local route_allowed_ips
++  local endpoint_host
++  local endpoint_port
++  local persistent_keepalive
++
++  config_get      public_key           "${peer_config}" "public_key"
++  config_get      preshared_key        "${peer_config}" "preshared_key"
++  config_get      allowed_ips          "${peer_config}" "allowed_ips"
++  config_get_bool route_allowed_ips    "${peer_config}" "route_allowed_ips" 0
++  config_get      endpoint_host        "${peer_config}" "endpoint_host"
++  config_get      endpoint_port        "${peer_config}" "endpoint_port"
++  config_get      persistent_keepalive "${peer_config}" "persistent_keepalive"
++
++  # peer configuration
++  echo "[Peer]"                                         >> "${wg_cfg}"
++  echo "PublicKey=${public_key}"                        >> "${wg_cfg}"
++  if [ "${preshared_key}" ]; then
++    echo "PresharedKey=${preshared_key}"                >> "${wg_cfg}"
++  fi
++  for allowed_ip in $allowed_ips; do
++    echo "AllowedIPs=${allowed_ip}"                     >> "${wg_cfg}"
++  done
++  if [ "${endpoint_host}" ]; then
++    case "${endpoint_host}" in
++      *:*)
++        endpoint="[${endpoint_host}]"
++      ;;
++      *)
++        endpoint="${endpoint_host}"
++      ;;
++    esac
++    if [ "${endpoint_port}" ]; then
++      endpoint="${endpoint}:${endpoint_port}"
++    else
++      endpoint="${endpoint}:51820"
++    fi
++    echo "Endpoint=${endpoint}"                         >> "${wg_cfg}"
++  fi
++  if [ "${persistent_keepalive}" ]; then
++    echo "PersistentKeepalive=${persistent_keepalive}"  >> "${wg_cfg}"
++  fi
++
++  # add routes for allowed ips
++  if [ ${route_allowed_ips} -ne 0 ]; then
++    for allowed_ip in ${allowed_ips}; do
++      case "${allowed_ip}" in
++        *:*/*)
++          proto_add_ipv6_route "${allowed_ip%%/*}" "${allowed_ip##*/}"
++        ;;
++        *.*/*)
++          proto_add_ipv4_route "${allowed_ip%%/*}" "${allowed_ip##*/}"
++        ;;
++        *:*)
++          proto_add_ipv6_route "${allowed_ip%%/*}" "128"
++        ;;
++        *.*)
++          proto_add_ipv4_route "${allowed_ip%%/*}" "32"
++        ;;
++      esac
++    done
++  fi
++}
++
++
++proto_wireguard_setup() {
++  local config="$1"
++  local wg_dir="/tmp/wireguard"
++  local wg_cfg="${wg_dir}/${config}"
++
++  local private_key
++  local listen_port
++  local mtu
++
++  # load configuration
++  config_load network
++  config_get private_key   "${config}" "private_key"
++  config_get listen_port   "${config}" "listen_port"
++  config_get addresses     "${config}" "addresses"
++  config_get mtu           "${config}" "mtu"
++  config_get fwmark        "${config}" "fwmark"
++
++  # create interface
++  ip link del dev "${config}" 2>/dev/null
++  ip link add dev "${config}" type wireguard
++
++  if [ "${mtu}" ]; then
++    ip link set mtu "${mtu}" dev "${config}"
++  fi
++
++  proto_init_update "${config}" 1
++
++  # generate configuration file
++  umask 077
++  mkdir -p "${wg_dir}"
++  echo "[Interface]"                     >  "${wg_cfg}"
++  echo "PrivateKey=${private_key}"       >> "${wg_cfg}"
++  if [ "${listen_port}" ]; then
++    echo "ListenPort=${listen_port}"     >> "${wg_cfg}"
++  fi
++  if [ "${fwmark}" ]; then
++    echo "FwMark=${fwmark}" >> "${wg_cfg}"
++  fi
++  config_foreach proto_wireguard_setup_peer "wireguard_${config}"
++
++  # apply configuration file
++  ${WG} setconf ${config} "${wg_cfg}"
++  WG_RETURN=$?
++
++  # delete configuration file
++  rm -f "${wg_cfg}"
++
++  # check status
++  if [ ${WG_RETURN} -ne 0 ]; then
++    sleep 5
++    proto_setup_failed "${config}"
++    exit 1
++  fi
++
++  # add ip addresses
++  for address in ${addresses}; do
++    case "${address}" in
++      *:*/*)
++        proto_add_ipv6_address "${address%%/*}" "${address##*/}"
++      ;;
++      *.*/*)
++        proto_add_ipv4_address "${address%%/*}" "${address##*/}"
++      ;;
++      *:*)
++        proto_add_ipv6_address "${address%%/*}" "128"
++      ;;
++      *.*)
++        proto_add_ipv4_address "${address%%/*}" "32"
++      ;;
++    esac
++  done
++
++  # endpoint dependency
++  wg show "${config}" endpoints | \
++    sed -E 's/\[?([0-9.:a-f]+)\]?:([0-9]+)/\1 \2/' | \
++    while IFS=$'\t ' read -r key address port; do
++    [ -n "${port}" ] || continue
++    proto_add_host_dependency "${config}" "${address}"
++  done
++
++  proto_send_update "${config}"
++}
++
++
++proto_wireguard_teardown() {
++  local config="$1"
++  ip link del dev "${config}" >/dev/null 2>&1
++}
++
++
++[ -n "$INCLUDE_ONLY" ] || {
++  add_protocol wireguard
++}
